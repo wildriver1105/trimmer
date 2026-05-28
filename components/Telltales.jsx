@@ -11,10 +11,9 @@ const TT_LEN = 0.45;
 // position attribute만 in-place로 수정한다.
 
 export function Telltales({ geomData, forces }) {
-  // 텔테일 배치는 단면 인덱스와 chord 인덱스로 사전 계산.
+  // 텔테일 배치 — 러프(luff) 텔테일은 streamlines로 대체되었으므로 leech만 유지 (리치 장력 진단용).
   const ttSpec = useMemo(() => {
     const M = geomData.M;
-    const luffIdx = Math.max(1, Math.round(M * 0.05));
     const leechIdx = Math.min(M - 2, Math.round(M * 0.95));
     const heights = [0.20, 0.50, 0.78];
     const stations = geomData.stationData;
@@ -26,7 +25,6 @@ export function Telltales({ geomData, forces }) {
         const d = Math.abs(stations[i].h - h);
         if (d < bestDiff) { bestDiff = d; bestI = i; }
       }
-      list.push({ stationIdx: bestI, chordIdx: luffIdx, side: 'luff' });
       list.push({ stationIdx: bestI, chordIdx: leechIdx, side: 'leech' });
     }
     return list;

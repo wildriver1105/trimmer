@@ -27,6 +27,7 @@ export const useSimStore = create((set) => ({
   showTelltales: true,
   showForces: true,
   showWind: true,
+  showStreamlines: true,
   wireframe: false,
 
   set: (key, value) => set({ [key]: value }),

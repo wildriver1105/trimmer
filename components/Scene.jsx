@@ -12,6 +12,7 @@ import { Rig } from './Rig';
 import { WindField } from './WindField';
 import { ForceArrows } from './ForceArrows';
 import { Telltales } from './Telltales';
+import { Streamlines } from './Streamlines';
 import { SAIL, COLORS } from '@/lib/constants';
 
 export function Scene() {
@@ -31,6 +32,7 @@ export function Scene() {
   const showTelltales = useSimStore((s) => s.showTelltales);
   const showForces = useSimStore((s) => s.showForces);
   const showWind = useSimStore((s) => s.showWind);
+  const showStreamlines = useSimStore((s) => s.showStreamlines);
   const wireframe = useSimStore((s) => s.wireframe);
 
   const { shape, geomData, wind, forces } = useMemo(() => {
@@ -84,7 +86,11 @@ export function Scene() {
           infiniteGrid
         />
 
-        <Rig mastBend={shape.mastBend} boomAngle={shape.boomAngle} />
+        <Rig
+          mastBend={shape.mastBend}
+          boomAngle={shape.boomAngle}
+          boomRise={shape.boomRise}
+        />
         <Sail
           geomData={geomData}
           forces={forces}
@@ -92,6 +98,7 @@ export function Scene() {
           wireframe={wireframe}
         />
         {showWind && <WindField wind={wind} />}
+        {showStreamlines && <Streamlines geomData={geomData} forces={forces} wind={wind} />}
         {showForces && <ForceArrows forces={forces} wind={wind} />}
         {showTelltales && <Telltales geomData={geomData} forces={forces} />}
       </Suspense>

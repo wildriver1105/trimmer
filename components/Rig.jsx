@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { useMemo } from 'react';
 import { RIG, SAIL, COLORS } from '@/lib/constants';
 
-export function Rig({ mastBend, boomAngle }) {
+export function Rig({ mastBend, boomAngle, boomRise = 0 }) {
   // 마스트: backstay에 따라 cubic으로 휨. TubeGeometry로 만들기.
   const mastGeom = useMemo(() => {
     const segments = 24;
@@ -12,8 +12,8 @@ export function Rig({ mastBend, boomAngle }) {
       Array.from({ length: 6 }, (_, k) => {
         const t = k / 5;
         const y = t * RIG.mastHeight;
-        // 마스트는 헤드 부근에서 -x로 휨
-        const x = -mastBend * (t * t * t);
+        // backstay tighten시 마스트가 앞(+x)으로 휘는 단순화된 모델
+        const x = mastBend * (t * t * t);
         return new THREE.Vector3(x, y, 0);
       })
     );
@@ -33,33 +33,71 @@ export function Rig({ mastBend, boomAngle }) {
         <meshStandardMaterial color={COLORS.mast} roughness={0.4} metalness={0.5} />
       </mesh>
 
-      {/* 붐 (gooseneck=마스트 foot 근처 boom 높이부터) */}
-      <group position={[0, RIG.boomHeight, 0]} rotation={[0, boomAngle, 0]}>
-        <mesh
-          position={[boomLen / 2, 0, 0]}
-          rotation={[0, 0, Math.PI / 2]}
-          castShadow
-        >
-          <cylinderGeometry args={[RIG.boomRadius, RIG.boomRadius, boomLen, 12]} />
-          <meshStandardMaterial color={COLORS.boom} roughness={0.4} metalness={0.5} />
-        </mesh>
-        {/* 붐 끝의 outhaul 표시 (작은 구) */}
-        <mesh position={[boomLen, 0, 0]}>
-          <sphereGeometry args={[0.08, 12, 12]} />
-          <meshStandardMaterial color={'#aaa'} metalness={0.6} roughness={0.3} />
-        </mesh>
+      {/* 붐 (gooseneck=마스트 foot 근처 boom 높이부터 보트 뒤쪽 -x로 펼쳐짐).
+          외부 group: gooseneck 위치에서 y축으로 boom angle (sailGeometry의 leech -z 방향과 일치하도록 -boomAngle).
+          내부 group: boom rise — gooseneck에서 outhaul 끝이 위로 들리도록 z축 회전.
+          -x 방향으로 뻗은 boom의 끝을 +y로 들어올리려면 z 회전이 -boomRise이어야 함. */}
+      <group position={[0, RIG.boomHeight, 0]} rotation={[0, -boomAngle, 0]}>
+        <group rotation={[0, 0, -boomRise]}>
+          <mesh
+            position={[-boomLen / 2, 0, 0]}
+            rotation={[0, 0, Math.PI / 2]}
+            castShadow
+          >
+            <cylinderGeometry args={[RIG.boomRadius, RIG.boomRadius, boomLen, 12]} />
+            <meshStandardMaterial color={COLORS.boom} roughness={0.4} metalness={0.5} />
+          </mesh>
+          {/* 붐 끝의 outhaul 표시 (작은 구) */}
+          <mesh position={[-boomLen, 0, 0]}>
+            <sphereGeometry args={[0.08, 12, 12]} />
+            <meshStandardMaterial color={'#aaa'} metalness={0.6} roughness={0.3} />
+          </mesh>
+        </group>
+        {/* Boom vang — gooseneck 부근에서 boom의 mid 아래쪽까지 잇는 선.
+            boom이 위로 들릴수록 vang의 길이가 늘어나는 시각효과를 위해 boom mid 위치는 회전 적용된 좌표로 계산. */}
+        <BoomVang boomLen={boomLen} boomRise={boomRise} />
       </group>
 
-      {/* 백스테이 (마스트 헤드 -> 헐 뒤쪽) */}
+      {/* 백스테이 (마스트 헤드 -> 헐 뒤쪽 -x) */}
       <Stay
-        from={[-mastBend, RIG.mastHeight, 0]}
+        from={[mastBend, RIG.mastHeight, 0]}
         to={[-RIG.hullLength / 2 + 0.4, 0.4, 0]}
       />
-      {/* 포스테이 (마스트 헤드 -> 헐 앞쪽) */}
+      {/* 포스테이 (마스트 헤드 -> 헐 앞쪽 +x) */}
       <Stay
-        from={[-mastBend, RIG.mastHeight, 0]}
+        from={[mastBend, RIG.mastHeight, 0]}
         to={[RIG.hullLength / 2 - 0.4, 0.4, 0]}
       />
+    </group>
+  );
+}
+
+// Boom Vang — gooseneck 아래 데크에서 boom 25% 지점까지 잇는 선.
+// 부모 group은 (0, boomHeight, 0)에서 -boomAngle y회전된 상태이므로
+// 이 컴포넌트는 그 local 좌표계에서 동작.
+function BoomVang({ boomLen, boomRise }) {
+  const attachT = 0.25; // boom의 25% 지점에 vang 부착
+  // boom의 attach 점 (boom 내부 group과 동일한 z회전 적용 후 local)
+  const ax = -attachT * boomLen * Math.cos(boomRise);
+  const ay = attachT * boomLen * Math.sin(boomRise);
+  // vang의 데크 쪽 끝: 마스트 기둥 근처 데크 위. local 좌표계에서 (0, -boomHeight + 0.3, 0)
+  const dx = 0;
+  const dy = -RIG.boomHeight + 0.3;
+  const geom = useMemo(() => {
+    const a = new THREE.Vector3(dx, dy, 0);
+    const b = new THREE.Vector3(ax, ay, 0);
+    return new THREE.BufferGeometry().setFromPoints([a, b]);
+  }, [ax, ay, dx, dy]);
+  return (
+    <group>
+      <line geometry={geom}>
+        <lineBasicMaterial color={'#b8c2cc'} transparent opacity={0.85} />
+      </line>
+      {/* attach 점 작은 fitting */}
+      <mesh position={[ax, ay, 0]}>
+        <sphereGeometry args={[0.05, 8, 8]} />
+        <meshStandardMaterial color={'#999'} metalness={0.6} roughness={0.3} />
+      </mesh>
     </group>
   );
 }

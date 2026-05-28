@@ -4,6 +4,7 @@ import { useSimStore } from '@/store/useSimStore';
 
 const items = [
   { key: 'showPressure', label: 'Pressure colormap' },
+  { key: 'showStreamlines', label: 'Streamlines' },
   { key: 'showTelltales', label: 'Telltales' },
   { key: 'showForces', label: 'Force arrows' },
   { key: 'showWind', label: 'Wind arrows' },
