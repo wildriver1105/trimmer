@@ -5,53 +5,55 @@ import * as THREE from 'three';
 import { Line } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 
-// America's Cup 스타일의 흐름선:
-// 여러 높이에서 바람이 세일에 부딪혀 어디로 흐르는지 시각화.
-//   - 흐름 engagement(=|CL|로 측정)가 낮으면 → 세일을 지나치며 곧게 흐름 (under-trim, 루핑)
-//   - engagement가 높고 stall 아니면 → 세일 leeward 면을 따라 부드럽게 휘어 흐름 (정상 트림)
-//   - stall(over-trim)이면 → 분리 지점부터 난류 형태로 흐트러짐
-// dashed 라인의 dashOffset을 매 프레임 갱신해 "흐르는" 효과를 낸다.
+// Wind-tunnel 스타일 스트림라인:
+//   - 각 높이에서 여러 측방 오프셋(perp-to-flow)으로 다발 형성
+//   - 흐름 방향으로 march하면서 매 step마다 세일 영향을 계산
+//   - 단면-로컬 (s, n) 좌표:
+//       s = chord 방향 (luff → leech)
+//       n = chord 수직 (leeward 양수)
+//   - n > 0 (leeward 측):
+//       정상: Coanda — sail surface(camber 곡선) 쪽으로 끌려감 + 가까울수록 가속(Bernoulli)
+//       stall: separation point(30%) 이후 떨어져나가며 와류 형태로 진동
+//   - n < 0 (windward 측):
+//       세일 표면(chord 라인) 근처에서만 가벼운 deflection
+//   - dashOffset 애니메이션으로 흐름 표현
 
-const N_HEIGHTS = 8;
-const LEEWARD_OFFSET = 0.28;
+const N_HEIGHTS = 6;
+const LATERAL_OFFSETS = [-3.2, -2.0, -1.0, -0.4, 0.4, 0.9, 1.5, 2.4, 3.4];
+const MARCH_N = 70;
+const TOTAL_LEN = 22;
 const UPSTREAM_DIST = 8;
-const DOWNSTREAM_DIST = 8;
-const UPSTREAM_N = 10;
-const SAIL_N = 14;
-const DOWNSTREAM_N = 10;
 
 export function Streamlines({ geomData, forces, wind }) {
-  // 단면 인덱스를 미리 매핑
   const config = useMemo(() => {
     const stations = geomData.stationData;
     const list = [];
     for (let k = 0; k < N_HEIGHTS; k++) {
-      const h = 0.04 + (k / (N_HEIGHTS - 1)) * 0.90;
+      const h = 0.08 + (k / (N_HEIGHTS - 1)) * 0.84;
       let bestI = 0, bestDiff = 1e9;
       for (let i = 0; i < stations.length; i++) {
         const d = Math.abs(stations[i].h - h);
         if (d < bestDiff) { bestDiff = d; bestI = i; }
       }
-      list.push({ stationIdx: bestI });
+      for (const off of LATERAL_OFFSETS) {
+        list.push({ stationIdx: bestI, offset: off });
+      }
     }
     return list;
   }, [geomData.stationData]);
 
-  // 트림/바람이 변할 때만 재계산
   const lines = useMemo(
     () => computeStreamlines(config, geomData, forces, wind),
     [config, geomData, forces, wind]
   );
 
-  // dashOffset 애니메이션으로 흐름 표현
+  // dashOffset 애니메이션 (flow 방향성 시각화)
   const refs = useRef([]);
   useFrame((state) => {
     const phase = state.clock.elapsedTime * 1.6;
-    refs.current.forEach((r) => {
-      if (r && r.material) {
-        r.material.dashOffset = -phase;
-      }
-    });
+    for (const r of refs.current) {
+      if (r && r.material) r.material.dashOffset = -phase;
+    }
   });
 
   return (
@@ -61,19 +63,13 @@ export function Streamlines({ geomData, forces, wind }) {
           key={k}
           ref={(r) => { refs.current[k] = r; }}
           points={line.points}
-          color={
-            line.stalled
-              ? '#ff7a7a'                                  // over-trim (빨강)
-              : line.engagement < 0.18
-                ? '#9ec5e6'                                // under-trim / luffing (옅은 파랑)
-                : '#ffffff'                                // 정상 (흰색)
-          }
-          lineWidth={1.6}
+          color={line.color}
+          lineWidth={1.2}
           dashed
-          dashSize={0.55}
-          gapSize={0.35}
+          dashSize={line.dashSize}
+          gapSize={line.gapSize}
           transparent
-          opacity={0.78}
+          opacity={line.opacity}
         />
       ))}
     </group>
@@ -89,6 +85,7 @@ function computeStreamlines(config, geomData, forces, wind) {
 
   const stations = geomData.stationData;
   const sForces = forces.stationForces || [];
+  const dt = TOTAL_LEN / MARCH_N;
   const result = [];
 
   for (const cfg of config) {
@@ -96,81 +93,138 @@ function computeStreamlines(config, geomData, forces, wind) {
     const sf = sForces[cfg.stationIdx];
     if (!st || !sf) continue;
 
-    const stalled = sf.isStalled;
-    // engagement: |CL|로 측정. 정상 양력 1.2 정도일 때 1.0으로 정규화.
-    const engagement = stalled ? 1 : Math.min(1, Math.abs(sf.CL) / 1.2);
-
-    const angle = st.angle;
-    // 단면 leeward 법선 (xz 평면)
-    const nx = Math.sin(angle);
-    const nz = -Math.cos(angle);
-
     const luffX = st.luff[0];
     const luffY = st.luff[1];
     const luffZ = st.luff[2];
 
-    // leeward 측 오프셋을 적용한 luff 시작점
-    const luffOffsetX = luffX + nx * LEEWARD_OFFSET;
-    const luffOffsetZ = luffZ + nz * LEEWARD_OFFSET;
+    // 코드 방향 (luff → leech)
+    const chordLen = Math.hypot(st.leech[0] - luffX, st.leech[2] - luffZ);
+    const sx = (st.leech[0] - luffX) / chordLen;
+    const sz = (st.leech[2] - luffZ) / chordLen;
 
-    const sailM = st.positions.length;
-    const chord = Math.hypot(
-      st.leech[0] - st.luff[0],
-      st.leech[2] - st.luff[2]
-    );
+    // chord에 수직, leeward 양수 (camber bulge 방향)
+    const nx = Math.sin(st.angle);
+    const nz = -Math.cos(st.angle);
 
-    const points = [];
-
-    // 1. 상류 — 멀리서 흐름 방향으로 직진해 luff offset 점까지
-    for (let i = 0; i <= UPSTREAM_N; i++) {
-      const t = i / UPSTREAM_N;
-      const dist = UPSTREAM_DIST * (1 - t);
-      points.push([
-        luffOffsetX - fx * dist,
-        luffY,
-        luffOffsetZ - fz * dist,
-      ]);
+    // 흐름에 수직, leeward 측 (스트림라인 시드 배치용)
+    let perpX = -fz;
+    let perpZ = fx;
+    if (perpX * nx + perpZ * nz < 0) {
+      perpX = -perpX;
+      perpZ = -perpZ;
     }
 
-    // 2. 세일 구간 — 직선 baseline과 세일 leeward 경로를 engagement로 lerp
-    let lastX = luffOffsetX;
-    let lastY = luffY;
-    let lastZ = luffOffsetZ;
-    for (let i = 1; i <= SAIL_N; i++) {
-      const t = i / SAIL_N;
-      const sailIdx = Math.min(sailM - 1, Math.round(t * (sailM - 1)));
-      const sp = st.positions[sailIdx];
-      const wrappedX = sp[0] + nx * LEEWARD_OFFSET;
-      const wrappedY = sp[1];
-      const wrappedZ = sp[2] + nz * LEEWARD_OFFSET;
-      const straightX = luffOffsetX + fx * t * chord;
-      const straightZ = luffOffsetZ + fz * t * chord;
-      const straightY = luffY;
-      let x = straightX + (wrappedX - straightX) * engagement;
-      let z = straightZ + (wrappedZ - straightZ) * engagement;
-      let y = straightY + (wrappedY - straightY) * engagement;
-      // stall 후 흐트러진 난류
-      if (stalled && t > 0.35) {
-        const k = (t - 0.35) / 0.65;
-        y += Math.sin(i * 1.7 + st.h * 9) * 0.30 * k;
-        x += nx * Math.sin(i * 2.1 + st.h * 5) * 0.18 * k;
-        z += nz * Math.sin(i * 2.1 + st.h * 5) * 0.18 * k;
+    const stalled = sf.isStalled;
+    const engagement = stalled ? 0.85 : Math.min(1, Math.abs(sf.CL) / 1.2);
+    const d = cfg.offset;
+
+    // 시드 — far upstream
+    let px = luffX + perpX * d - fx * UPSTREAM_DIST;
+    let py = luffY;
+    let pz = luffZ + perpZ * d - fz * UPSTREAM_DIST;
+    const points = [[px, py, pz]];
+
+    for (let i = 1; i <= MARCH_N; i++) {
+      const dx = px - luffX;
+      const dz = pz - luffZ;
+      const s = dx * sx + dz * sz;
+      const n = dx * nx + dz * nz;
+      const sNorm = s / chordLen;
+
+      // 이 s 위치에서의 세일 표면 n 값 (camber 곡선, sailGeometry와 동일 모델)
+      let sailN = 0;
+      if (sNorm > 0 && sNorm < 1) {
+        const dp = st.draftPos;
+        if (sNorm < dp) {
+          sailN = st.camber * chordLen * Math.sin((Math.PI / 2) * (sNorm / dp));
+        } else {
+          sailN = st.camber * chordLen * Math.sin((Math.PI / 2) * (1 - (sNorm - dp) / (1 - dp)));
+        }
       }
-      points.push([x, y, z]);
-      lastX = x; lastY = y; lastZ = z;
+
+      let perpAdjust = 0;
+      let flowMult = 1;
+      let yAdjust = 0;
+
+      if (sNorm > -0.05 && sNorm < 1.0) {
+        // 세일 영향 구간
+        if (n > 0) {
+          // leeward
+          const separated = stalled && sNorm > 0.30;
+          if (!separated) {
+            // Coanda: 세일 표면 살짝 위로 끌려감
+            const targetN = sailN + 0.14;
+            const attract = 0.28 * engagement;
+            perpAdjust = (targetN - n) * attract;
+            // Bernoulli — 표면 근처에서 가속
+            const closeness = Math.max(0, 1 - Math.abs(n - sailN) / 0.7);
+            flowMult = 1 + 0.45 * closeness * engagement;
+          } else {
+            // 분리 + 와류 shedding
+            const wakeAge = (sNorm - 0.30) / 0.70;
+            // 살짝 leeward로 떠남
+            perpAdjust = 0.08 * wakeAge;
+            // 와류 진동 — perp와 y 평면에서 위상차 있는 회전 형태
+            const phase = i * 1.7 + sNorm * 8 + d * 1.5;
+            const amp = 0.45 * wakeAge;
+            perpAdjust += amp * Math.sin(phase);
+            yAdjust = amp * 0.7 * Math.cos(phase);
+            flowMult = 1 - 0.18 * wakeAge;
+          }
+        } else if (sNorm > 0) {
+          // windward — chord 라인 근처에서만 가벼운 deflection
+          const dist = -n; // 양수
+          const reachR = 0.5;
+          if (dist < reachR) {
+            const factor = 1 - dist / reachR;
+            perpAdjust = -0.08 * factor * factor;
+            flowMult = 1 - 0.10 * factor;
+          }
+        }
+      } else if (sNorm >= 1.0 && sNorm < 1.6) {
+        // 후류 wake
+        if (stalled && Math.abs(n) < 1.5) {
+          const wakeAge = (sNorm - 1.0) / 0.6;
+          const fade = 1 - wakeAge;
+          const phase = i * 1.4 + sNorm * 4 + d * 2;
+          yAdjust = 0.55 * fade * Math.sin(phase);
+          perpAdjust = 0.40 * fade * Math.cos(phase);
+        }
+      }
+
+      px += fx * dt * flowMult + perpX * perpAdjust;
+      pz += fz * dt * flowMult + perpZ * perpAdjust;
+      py += yAdjust;
+
+      points.push([px, py, pz]);
     }
 
-    // 3. 하류 — 세일 끝에서 흐름 방향으로 직진
-    for (let i = 1; i <= DOWNSTREAM_N; i++) {
-      const t = i / DOWNSTREAM_N;
-      const dist = DOWNSTREAM_DIST * t;
-      points.push([lastX + fx * dist, lastY, lastZ + fz * dist]);
+    // 색상 — 정상/언더트림/오버트림 구분
+    let color, dashSize, gapSize;
+    if (stalled) {
+      color = '#ff7a7a';                // 오버트림: 빨강
+      dashSize = 0.35; gapSize = 0.22;  // 더 잘게 — 난류 느낌
+    } else if (engagement < 0.18) {
+      color = '#9ec5e6';                // 언더트림(luffing): 옅은 파랑
+      dashSize = 0.55; gapSize = 0.40;
+    } else {
+      color = '#ffffff';                // 정상 흐름: 흰색
+      dashSize = 0.50; gapSize = 0.30;
     }
+
+    // 세일 가까울수록 더 진하게
+    const absD = Math.abs(d);
+    let opacity;
+    if (absD < 1.0) opacity = 0.88;
+    else if (absD < 2.2) opacity = 0.65;
+    else opacity = 0.42;
 
     result.push({
       points: points.map((p) => new THREE.Vector3(...p)),
-      stalled,
-      engagement,
+      color,
+      opacity,
+      dashSize,
+      gapSize,
     });
   }
   return result;

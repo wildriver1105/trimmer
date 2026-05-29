@@ -20,6 +20,8 @@ function Arrow({ from, dir, length, color, label, headSize = 0.5 }) {
   }, [dirN.x, dirN.y, dirN.z]);
 
   const shaftLen = Math.max(0.01, len - headSize);
+  // 길이에 비례한 샤프트 두께 (최소 6cm)
+  const shaftRadius = Math.max(0.06, len * 0.022);
   // cylinder는 기본적으로 +y 중심에 위치 → translate 절반만큼
   const cylinderPos = dirN.clone().multiplyScalar(shaftLen / 2).add(fromV);
   const conePos = dirN.clone().multiplyScalar(shaftLen + headSize / 2).add(fromV);
@@ -27,11 +29,11 @@ function Arrow({ from, dir, length, color, label, headSize = 0.5 }) {
   return (
     <group>
       <mesh position={cylinderPos.toArray()} quaternion={quat}>
-        <cylinderGeometry args={[0.05, 0.05, shaftLen, 8]} />
+        <cylinderGeometry args={[shaftRadius, shaftRadius, shaftLen, 10]} />
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.2} />
       </mesh>
       <mesh position={conePos.toArray()} quaternion={quat}>
-        <coneGeometry args={[headSize * 0.35, headSize, 12]} />
+        <coneGeometry args={[Math.max(headSize * 0.38, shaftRadius * 2), headSize, 14]} />
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.3} />
       </mesh>
       {label && (
