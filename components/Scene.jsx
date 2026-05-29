@@ -33,6 +33,7 @@ export function Scene() {
   const showForces = useSimStore((s) => s.showForces);
   const showWind = useSimStore((s) => s.showWind);
   const showStreamlines = useSimStore((s) => s.showStreamlines);
+  const streamDensity = useSimStore((s) => s.streamDensity);
   const wireframe = useSimStore((s) => s.wireframe);
 
   const { shape, geomData, wind, forces } = useMemo(() => {
@@ -98,7 +99,14 @@ export function Scene() {
           wireframe={wireframe}
         />
         {showWind && <WindField wind={wind} />}
-        {showStreamlines && <Streamlines geomData={geomData} forces={forces} wind={wind} />}
+        {showStreamlines && (
+          <Streamlines
+            geomData={geomData}
+            forces={forces}
+            wind={wind}
+            density={streamDensity}
+          />
+        )}
         {showForces && <ForceArrows forces={forces} wind={wind} />}
         {showTelltales && <Telltales geomData={geomData} forces={forces} />}
       </Suspense>

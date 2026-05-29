@@ -18,29 +18,48 @@ import { useFrame } from '@react-three/fiber';
 //       세일 표면(chord 라인) 근처에서만 가벼운 deflection
 //   - dashOffset 애니메이션으로 흐름 표현
 
-const N_HEIGHTS = 6;
-const LATERAL_OFFSETS = [-3.2, -2.0, -1.0, -0.4, 0.4, 0.9, 1.5, 2.4, 3.4];
+// 기본(밀도 1.0) 기준: 6 높이 × 9 측방 라인.
+const BASE_HEIGHTS = 6;
+const BASE_OFFSETS = 9;
+const OFFSET_RANGE = 3.5; // 측방 라인이 분포하는 최대 거리 (m)
 const MARCH_N = 70;
 const TOTAL_LEN = 22;
 const UPSTREAM_DIST = 8;
 
-export function Streamlines({ geomData, forces, wind }) {
+// count개의 측방 오프셋을 [-OFFSET_RANGE, OFFSET_RANGE] 범위에 생성.
+// 양쪽 끝은 듬성, 중앙(=세일 가까이)은 빽빽하도록 power curve 적용.
+function makeOffsets(count) {
+  if (count < 2) return [0];
+  const offsets = [];
+  for (let i = 0; i < count; i++) {
+    const t = -1 + (2 * i) / (count - 1); // -1 .. 1
+    const sign = t < 0 ? -1 : 1;
+    const curved = Math.pow(Math.abs(t), 1.35);
+    offsets.push(sign * curved * OFFSET_RANGE);
+  }
+  return offsets;
+}
+
+export function Streamlines({ geomData, forces, wind, density = 1.0 }) {
   const config = useMemo(() => {
     const stations = geomData.stationData;
+    const nHeights = Math.max(2, Math.round(BASE_HEIGHTS * density));
+    const nOffsets = Math.max(3, Math.round(BASE_OFFSETS * density));
+    const offsets = makeOffsets(nOffsets);
     const list = [];
-    for (let k = 0; k < N_HEIGHTS; k++) {
-      const h = 0.08 + (k / (N_HEIGHTS - 1)) * 0.84;
+    for (let k = 0; k < nHeights; k++) {
+      const h = 0.08 + (k / (nHeights - 1)) * 0.84;
       let bestI = 0, bestDiff = 1e9;
       for (let i = 0; i < stations.length; i++) {
         const d = Math.abs(stations[i].h - h);
         if (d < bestDiff) { bestDiff = d; bestI = i; }
       }
-      for (const off of LATERAL_OFFSETS) {
+      for (const off of offsets) {
         list.push({ stationIdx: bestI, offset: off });
       }
     }
     return list;
-  }, [geomData.stationData]);
+  }, [geomData.stationData, density]);
 
   const lines = useMemo(
     () => computeStreamlines(config, geomData, forces, wind),

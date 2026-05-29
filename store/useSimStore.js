@@ -30,6 +30,9 @@ export const useSimStore = create((set) => ({
   showStreamlines: true,
   wireframe: false,
 
+  // 시각화 매개변수
+  streamDensity: defaults.streamDensity,
+
   set: (key, value) => set({ [key]: value }),
   reset: () => set({ ...defaults }),
   toggle: (key) => set((s) => ({ [key]: !s[key] })),
