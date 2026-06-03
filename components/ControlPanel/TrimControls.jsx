@@ -1,28 +1,35 @@
 'use client';
 
 import { useSimStore } from '@/store/useSimStore';
-import { SLIDER } from '@/lib/constants';
+import { TRIM_SLIDER } from '@/lib/constants';
+import { SAIL_TYPES } from '@/lib/sails';
 import { Slider } from './Slider';
 
-const KEYS = ['outhaul', 'cunningham', 'halyard', 'backstay', 'vang', 'sheet', 'traveler'];
+/**
+ * 한 세일의 트림 슬라이더 모음. ControlPanel이 활성 세일마다 인스턴스 마운트.
+ *
+ * @param {string} sailKey - 'main' | 'jib' | 'genoa' | 'spinnaker' | 'gennaker'
+ */
+export function TrimControls({ sailKey }) {
+  const trimValues = useSimStore((s) => s.trim[sailKey]);
+  const setTrim = useSimStore((s) => s.setTrim);
 
-export function TrimControls() {
-  const state = useSimStore();
-  const set = useSimStore((s) => s.set);
+  const sliderConfigs = TRIM_SLIDER[sailKey];
+  const meta = SAIL_TYPES[sailKey]?.meta;
+  if (!sliderConfigs || !meta || !trimValues) return null;
 
   return (
-    <section className="mb-5">
-      <h3 className="text-[10.5px] uppercase tracking-[0.2em] text-cyan-300 mb-2 border-b border-slate-700 pb-1">
-        Sail Trim
-      </h3>
-      {KEYS.map((k) => {
-        const cfg = SLIDER[k];
+    <div>
+      {meta.trimKeys.map((k) => {
+        const cfg = sliderConfigs[k];
+        if (!cfg) return null;
+        const value = trimValues[k] ?? cfg.def;
         return (
           <Slider
             key={k}
-            id={k}
-            value={state[k]}
-            onChange={(v) => set(k, v)}
+            id={`${sailKey}.${k}`}
+            value={value}
+            onChange={(v) => setTrim(sailKey, k, v)}
             min={cfg.min}
             max={cfg.max}
             step={cfg.step}
@@ -33,6 +40,6 @@ export function TrimControls() {
           />
         );
       })}
-    </section>
+    </div>
   );
 }

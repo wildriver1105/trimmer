@@ -1,11 +1,10 @@
 'use client';
 
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Environment, Grid } from '@react-three/drei';
+import { OrbitControls, Grid } from '@react-three/drei';
 import { Suspense, useMemo } from 'react';
-import { useSimStore } from '@/store/useSimStore';
-import { buildSailShape } from '@/lib/sailModel';
-import { buildSailGeometry } from '@/lib/sailGeometry';
+import { useSimStore, getActiveSails } from '@/store/useSimStore';
+import { buildShape, buildGeometry } from '@/lib/sails';
 import { computeWind, computeForces } from '@/lib/aero';
 import { Sail } from './Sail';
 import { Rig } from './Rig';
@@ -16,17 +15,13 @@ import { Streamlines } from './Streamlines';
 import { SAIL, COLORS } from '@/lib/constants';
 
 export function Scene() {
-  // 모든 트림/바람 값 구독
   const TWS = useSimStore((s) => s.TWS);
   const TWA = useSimStore((s) => s.TWA);
   const SOG = useSimStore((s) => s.SOG);
-  const outhaul = useSimStore((s) => s.outhaul);
-  const cunningham = useSimStore((s) => s.cunningham);
-  const halyard = useSimStore((s) => s.halyard);
-  const backstay = useSimStore((s) => s.backstay);
-  const vang = useSimStore((s) => s.vang);
-  const sheet = useSimStore((s) => s.sheet);
-  const traveler = useSimStore((s) => s.traveler);
+  const trim = useSimStore((s) => s.trim);
+  const activeMain = useSimStore((s) => s.activeMain);
+  const activeHeadsail = useSimStore((s) => s.activeHeadsail);
+  const activeDownwind = useSimStore((s) => s.activeDownwind);
 
   const showPressure = useSimStore((s) => s.showPressure);
   const showTelltales = useSimStore((s) => s.showTelltales);
@@ -36,14 +31,31 @@ export function Scene() {
   const streamDensity = useSimStore((s) => s.streamDensity);
   const wireframe = useSimStore((s) => s.wireframe);
 
-  const { shape, geomData, wind, forces } = useMemo(() => {
-    const trim = { outhaul, cunningham, halyard, backstay, vang, sheet, traveler };
-    const shape = buildSailShape(trim);
-    const geomData = buildSailGeometry(shape);
-    const wind = computeWind(TWS, TWA, SOG);
-    const forces = computeForces(shape, geomData, wind);
-    return { shape, geomData, wind, forces };
-  }, [TWS, TWA, SOG, outhaul, cunningham, halyard, backstay, vang, sheet, traveler]);
+  const activeKeys = useMemo(
+    () => getActiveSails({ activeMain, activeHeadsail, activeDownwind }),
+    [activeMain, activeHeadsail, activeDownwind]
+  );
+
+  const wind = useMemo(() => computeWind(TWS, TWA, SOG), [TWS, TWA, SOG]);
+
+  // 활성 세일별 shape/geom/forces 계산.
+  // sails 배열의 항목은 { key, shape, geomData, forces } 또는 stub은 null.
+  const sails = useMemo(() => {
+    return activeKeys
+      .map((key) => {
+        const shape = buildShape(key, trim[key]);
+        if (!shape) return null; // 미구현 stub
+        const geomData = buildGeometry(key, shape);
+        if (!geomData) return null;
+        const forces = computeForces(shape, geomData, wind);
+        return { key, shape, geomData, forces };
+      })
+      .filter(Boolean);
+  }, [activeKeys, trim, wind]);
+
+  // 합산 forces (현재 readout에 사용하기 위해 main만 있을 때는 동일하지만,
+  // 추후 다중 세일 합산 단계에서 확장).
+  const mainSail = sails.find((s) => s.key === 'main');
 
   return (
     <Canvas
@@ -70,7 +82,7 @@ export function Scene() {
       <hemisphereLight color={'#8fb6e0'} groundColor={'#0a2a3c'} intensity={0.35} />
 
       <Suspense fallback={null}>
-        {/* 바다 (격자 평면) */}
+        {/* 바다 */}
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow>
           <planeGeometry args={[200, 200]} />
           <meshStandardMaterial color={COLORS.sea} roughness={0.85} metalness={0.05} />
@@ -88,27 +100,37 @@ export function Scene() {
         />
 
         <Rig
-          mastBend={shape.mastBend}
-          boomAngle={shape.boomAngle}
-          boomRise={shape.boomRise}
+          mastBend={mainSail?.shape.mastBend ?? 0}
+          boomAngle={mainSail?.shape.boomAngle ?? 0}
+          boomRise={mainSail?.shape.boomRise ?? 0}
         />
-        <Sail
-          geomData={geomData}
-          forces={forces}
-          showPressure={showPressure}
-          wireframe={wireframe}
-        />
+
+        {sails.map(({ key, geomData, forces }) => (
+          <Sail
+            key={key}
+            geomData={geomData}
+            forces={forces}
+            showPressure={showPressure}
+            wireframe={wireframe}
+          />
+        ))}
+
         {showWind && <WindField wind={wind} />}
-        {showStreamlines && (
+        {showStreamlines && sails.map(({ key, geomData, forces }) => (
           <Streamlines
+            key={`sl-${key}`}
             geomData={geomData}
             forces={forces}
             wind={wind}
             density={streamDensity}
           />
-        )}
-        {showForces && <ForceArrows forces={forces} wind={wind} />}
-        {showTelltales && <Telltales geomData={geomData} forces={forces} />}
+        ))}
+        {showForces && sails.map(({ key, forces }) => (
+          <ForceArrows key={`fa-${key}`} forces={forces} wind={wind} />
+        ))}
+        {showTelltales && sails.map(({ key, geomData, forces }) => (
+          <Telltales key={`tt-${key}`} geomData={geomData} forces={forces} />
+        ))}
       </Suspense>
 
       <OrbitControls
