@@ -12,10 +12,19 @@ const MAX_LEN = 7.5;
 // 화살표 길이에 비례한 헤드 크기 (작은 화살표는 적당히 큰 헤드, 큰 화살표는 18% 비율)
 const headFor = (len) => Math.max(0.55, len * 0.18);
 
-export function ForceArrows({ forces, wind }) {
+const SAIL_LABEL = {
+  main: 'Main',
+  jib: 'Jib',
+  genoa: 'Gen',
+  spinnaker: 'Spi',
+  gennaker: 'Genn',
+};
+
+export function ForceArrows({ forces, wind, sailKey = 'main' }) {
   if (!forces || !forces.total) return null;
   const { CE } = forces;
   const { lift, drag, drive, heel, liftDir, dragDir } = forces.total;
+  const prefix = SAIL_LABEL[sailKey] ? `[${SAIL_LABEL[sailKey]}] ` : '';
 
   const liftLen  = Math.min(MAX_LEN, Math.max(MIN_LEN, lift  * FORCE_SCALE));
   const dragLen  = Math.min(MAX_LEN, Math.max(MIN_LEN * 0.6, drag  * FORCE_SCALE));
@@ -33,7 +42,7 @@ export function ForceArrows({ forces, wind }) {
         dir={liftDir}
         length={liftLen}
         color={COLORS.lift}
-        label={`Lift ${lift.toFixed(0)} N`}
+        label={`${prefix}Lift ${lift.toFixed(0)} N`}
         headSize={headFor(liftLen)}
       />
       {/* Drag */}
@@ -42,7 +51,7 @@ export function ForceArrows({ forces, wind }) {
         dir={dragDir}
         length={dragLen}
         color={COLORS.drag}
-        label={`Drag ${drag.toFixed(0)} N`}
+        label={`${prefix}Drag ${drag.toFixed(0)} N`}
         headSize={headFor(dragLen)}
       />
       {/* Drive (보트 진행 방향) */}
@@ -51,7 +60,7 @@ export function ForceArrows({ forces, wind }) {
         dir={driveDir}
         length={driveLen}
         color={COLORS.drive}
-        label={`Drive ${drive.toFixed(0)} N`}
+        label={`${prefix}Drive ${drive.toFixed(0)} N`}
         headSize={headFor(driveLen)}
       />
       {/* Heeling */}
@@ -60,7 +69,7 @@ export function ForceArrows({ forces, wind }) {
         dir={heelDir}
         length={heelLen}
         color={COLORS.heel}
-        label={`Heel ${heel.toFixed(0)} N`}
+        label={`${prefix}Heel ${heel.toFixed(0)} N`}
         headSize={headFor(heelLen)}
       />
     </group>

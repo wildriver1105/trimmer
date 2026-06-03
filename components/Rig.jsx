@@ -4,7 +4,14 @@ import * as THREE from 'three';
 import { useMemo } from 'react';
 import { RIG, SAIL, COLORS } from '@/lib/constants';
 
-export function Rig({ mastBend, boomAngle, boomRise = 0 }) {
+export function Rig({
+  mastBend,
+  boomAngle,
+  boomRise = 0,
+  showBoom = true,
+  spinnakerPole = null,
+  gennakerBowsprit = null,
+}) {
   // 마스트: backstay에 따라 cubic으로 휨. TubeGeometry로 만들기.
   const mastGeom = useMemo(() => {
     const segments = 24;
@@ -33,41 +40,65 @@ export function Rig({ mastBend, boomAngle, boomRise = 0 }) {
         <meshStandardMaterial color={COLORS.mast} roughness={0.4} metalness={0.5} />
       </mesh>
 
-      {/* 붐 (gooseneck=마스트 foot 근처 boom 높이부터 보트 뒤쪽 -x로 펼쳐짐).
-          외부 group: gooseneck 위치에서 y축으로 boom angle (sailGeometry의 leech -z 방향과 일치하도록 -boomAngle).
-          내부 group: boom rise — gooseneck에서 outhaul 끝이 위로 들리도록 z축 회전.
-          -x 방향으로 뻗은 boom의 끝을 +y로 들어올리려면 z 회전이 -boomRise이어야 함. */}
-      <group position={[0, RIG.boomHeight, 0]} rotation={[0, -boomAngle, 0]}>
-        <group rotation={[0, 0, -boomRise]}>
-          <mesh
-            position={[-boomLen / 2, 0, 0]}
-            rotation={[0, 0, Math.PI / 2]}
-            castShadow
-          >
-            <cylinderGeometry args={[RIG.boomRadius, RIG.boomRadius, boomLen, 12]} />
-            <meshStandardMaterial color={COLORS.boom} roughness={0.4} metalness={0.5} />
-          </mesh>
-          {/* 붐 끝의 outhaul 표시 (작은 구) */}
-          <mesh position={[-boomLen, 0, 0]}>
-            <sphereGeometry args={[0.08, 12, 12]} />
-            <meshStandardMaterial color={'#aaa'} metalness={0.6} roughness={0.3} />
-          </mesh>
+      {/* 붐 — 메인세일 활성 시에만 */}
+      {showBoom && (
+        <group position={[0, RIG.boomHeight, 0]} rotation={[0, -boomAngle, 0]}>
+          <group rotation={[0, 0, -boomRise]}>
+            <mesh
+              position={[-boomLen / 2, 0, 0]}
+              rotation={[0, 0, Math.PI / 2]}
+              castShadow
+            >
+              <cylinderGeometry args={[RIG.boomRadius, RIG.boomRadius, boomLen, 12]} />
+              <meshStandardMaterial color={COLORS.boom} roughness={0.4} metalness={0.5} />
+            </mesh>
+            <mesh position={[-boomLen, 0, 0]}>
+              <sphereGeometry args={[0.08, 12, 12]} />
+              <meshStandardMaterial color={'#aaa'} metalness={0.6} roughness={0.3} />
+            </mesh>
+          </group>
+          <BoomVang boomLen={boomLen} boomRise={boomRise} />
         </group>
-        {/* Boom vang — gooseneck 부근에서 boom의 mid 아래쪽까지 잇는 선.
-            boom이 위로 들릴수록 vang의 길이가 늘어나는 시각효과를 위해 boom mid 위치는 회전 적용된 좌표로 계산. */}
-        <BoomVang boomLen={boomLen} boomRise={boomRise} />
-      </group>
+      )}
 
-      {/* 백스테이 (마스트 헤드 -> 헐 뒤쪽 -x) */}
-      <Stay
-        from={[mastBend, RIG.mastHeight, 0]}
-        to={[-RIG.hullLength / 2 + 0.4, 0.4, 0]}
-      />
-      {/* 포스테이 (마스트 헤드 -> 헐 앞쪽 +x) */}
-      <Stay
-        from={[mastBend, RIG.mastHeight, 0]}
-        to={[RIG.hullLength / 2 - 0.4, 0.4, 0]}
-      />
+      {/* 백스테이/포스테이 */}
+      <Stay from={[mastBend, RIG.mastHeight, 0]} to={[-RIG.hullLength / 2 + 0.4, 0.4, 0]} />
+      <Stay from={[mastBend, RIG.mastHeight, 0]} to={[RIG.hullLength / 2 - 0.4, 0.4, 0]} />
+
+      {/* Spinnaker pole — base에서 tip까지 */}
+      {spinnakerPole && <Spar from={spinnakerPole.base} to={spinnakerPole.tip} radius={0.07} />}
+
+      {/* Gennaker bowsprit */}
+      {gennakerBowsprit && <Spar from={gennakerBowsprit.base} to={gennakerBowsprit.tip} radius={0.06} />}
+    </group>
+  );
+}
+
+// Spar (cylinder) — pole이나 bowsprit 같은 봉을 두 점 사이에 그림.
+function Spar({ from, to, radius = 0.06, color }) {
+  const data = useMemo(() => {
+    const a = new THREE.Vector3(...from);
+    const b = new THREE.Vector3(...to);
+    const dir = new THREE.Vector3().subVectors(b, a);
+    const len = dir.length();
+    const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+    const quat = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      dir.clone().normalize()
+    );
+    return { mid, quat, len };
+  }, [from[0], from[1], from[2], to[0], to[1], to[2]]);
+  return (
+    <group>
+      <mesh position={data.mid.toArray()} quaternion={data.quat} castShadow>
+        <cylinderGeometry args={[radius, radius, data.len, 10]} />
+        <meshStandardMaterial color={color || COLORS.mast} roughness={0.4} metalness={0.5} />
+      </mesh>
+      {/* 끝부분 표시 */}
+      <mesh position={to}>
+        <sphereGeometry args={[radius * 1.3, 10, 10]} />
+        <meshStandardMaterial color={'#aaa'} metalness={0.6} roughness={0.3} />
+      </mesh>
     </group>
   );
 }

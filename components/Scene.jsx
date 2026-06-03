@@ -56,6 +56,8 @@ export function Scene() {
   // 합산 forces (현재 readout에 사용하기 위해 main만 있을 때는 동일하지만,
   // 추후 다중 세일 합산 단계에서 확장).
   const mainSail = sails.find((s) => s.key === 'main');
+  const spinnakerSail = sails.find((s) => s.key === 'spinnaker');
+  const gennakerSail = sails.find((s) => s.key === 'gennaker');
 
   return (
     <Canvas
@@ -103,6 +105,9 @@ export function Scene() {
           mastBend={mainSail?.shape.mastBend ?? 0}
           boomAngle={mainSail?.shape.boomAngle ?? 0}
           boomRise={mainSail?.shape.boomRise ?? 0}
+          showBoom={!!mainSail}
+          spinnakerPole={spinnakerSail?.shape.pole ?? null}
+          gennakerBowsprit={gennakerSail?.shape.bowsprit ?? null}
         />
 
         {sails.map(({ key, geomData, forces }) => (
@@ -122,11 +127,12 @@ export function Scene() {
             geomData={geomData}
             forces={forces}
             wind={wind}
-            density={streamDensity}
+            // 세일 수 N일 때 라인 수가 폭증하지 않도록 1/√N 자동 감소
+            density={streamDensity / Math.sqrt(sails.length)}
           />
         ))}
         {showForces && sails.map(({ key, forces }) => (
-          <ForceArrows key={`fa-${key}`} forces={forces} wind={wind} />
+          <ForceArrows key={`fa-${key}`} sailKey={key} forces={forces} wind={wind} />
         ))}
         {showTelltales && sails.map(({ key, geomData, forces }) => (
           <Telltales key={`tt-${key}`} geomData={geomData} forces={forces} />
