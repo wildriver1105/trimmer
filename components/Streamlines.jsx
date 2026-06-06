@@ -2,7 +2,6 @@
 
 import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { Line } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 
 // Wind-tunnel 스타일 스트림라인:
@@ -16,7 +15,10 @@ import { useFrame } from '@react-three/fiber';
 //       stall: separation point(30%) 이후 떨어져나가며 와류 형태로 진동
 //   - n < 0 (windward 측):
 //       세일 표면(chord 라인) 근처에서만 가벼운 deflection
-//   - dashOffset 애니메이션으로 흐름 표현
+// 시각화:
+//   - 각 스트림라인을 따라 부드러운 둥근 파티클이 흘러감 (풍동 연기 모방)
+//   - 파티클은 lifecycle: spawn→full→fade out
+//   - additive blending + 라디얼 그라데이션 텍스처로 글로우 효과
 
 // 기본(밀도 1.0) 기준: 6 높이 × 9 측방 라인.
 const BASE_HEIGHTS = 6;
@@ -66,32 +68,119 @@ export function Streamlines({ geomData, forces, wind, density = 1.0 }) {
     [config, geomData, forces, wind]
   );
 
-  // dashOffset 애니메이션 (flow 방향성 시각화)
-  const refs = useRef([]);
+  return <SmokeFlow lines={lines} />;
+}
+
+// ──────────── 연기 파티클 렌더링 ────────────
+
+const PARTICLES_PER_STREAM = 14;
+const FLOW_SPEED = 0.12;       // 경로 1을 약 1/0.12 ≈ 8.3초에 횡단
+
+/** 라디얼 그라데이션 텍스처 — 부드러운 연기 puff 모양 */
+function makeSmokeTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0,    'rgba(255,255,255,1)');
+  grad.addColorStop(0.25, 'rgba(255,255,255,0.55)');
+  grad.addColorStop(0.6,  'rgba(255,255,255,0.15)');
+  grad.addColorStop(1,    'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  return tex;
+}
+
+function SmokeFlow({ lines }) {
+  const totalParticles = lines.length * PARTICLES_PER_STREAM;
+  const smokeTex = useMemo(makeSmokeTexture, []);
+
+  // 경로를 평탄화된 Float32Array로 미리 변환해 useFrame에서 빠르게 lerp.
+  const streamData = useMemo(() => {
+    return lines.map((line) => {
+      const N = line.points.length;
+      const path = new Float32Array(N * 3);
+      for (let i = 0; i < N; i++) {
+        path[i * 3]     = line.points[i].x;
+        path[i * 3 + 1] = line.points[i].y;
+        path[i * 3 + 2] = line.points[i].z;
+      }
+      const c = new THREE.Color(line.color);
+      return { path, N, r: c.r, g: c.g, b: c.b, base: line.opacity ?? 0.75 };
+    });
+  }, [lines]);
+
+  const positions = useMemo(() => new Float32Array(totalParticles * 3), [totalParticles]);
+  const colors    = useMemo(() => new Float32Array(totalParticles * 3), [totalParticles]);
+
+  const ref = useRef();
   useFrame((state) => {
-    const phase = state.clock.elapsedTime * 1.6;
-    for (const r of refs.current) {
-      if (r && r.material) r.material.dashOffset = -phase;
+    const t = state.clock.elapsedTime;
+    let idx = 0;
+
+    for (let si = 0; si < streamData.length; si++) {
+      const { path, N, r, g, b, base } = streamData[si];
+
+      for (let p = 0; p < PARTICLES_PER_STREAM; p++) {
+        const phaseOffset = p / PARTICLES_PER_STREAM;
+        const phase = (t * FLOW_SPEED + phaseOffset) % 1;
+
+        // 경로의 (phase × (N-1)) 위치 보간
+        const fpos = phase * (N - 1);
+        const i0 = Math.floor(fpos);
+        const i1 = Math.min(N - 1, i0 + 1);
+        const frac = fpos - i0;
+        positions[idx * 3]     = path[i0 * 3]     + (path[i1 * 3]     - path[i0 * 3])     * frac;
+        positions[idx * 3 + 1] = path[i0 * 3 + 1] + (path[i1 * 3 + 1] - path[i0 * 3 + 1]) * frac;
+        positions[idx * 3 + 2] = path[i0 * 3 + 2] + (path[i1 * 3 + 2] - path[i0 * 3 + 2]) * frac;
+
+        // 라이프사이클: 0→1→0 (sin curve)
+        const alpha = Math.sin(phase * Math.PI) * base;
+        colors[idx * 3]     = r * alpha;
+        colors[idx * 3 + 1] = g * alpha;
+        colors[idx * 3 + 2] = b * alpha;
+
+        idx++;
+      }
+    }
+
+    if (ref.current) {
+      ref.current.geometry.attributes.position.needsUpdate = true;
+      ref.current.geometry.attributes.color.needsUpdate = true;
     }
   });
 
+  if (totalParticles === 0) return null;
+
   return (
-    <group>
-      {lines.map((line, k) => (
-        <Line
-          key={k}
-          ref={(r) => { refs.current[k] = r; }}
-          points={line.points}
-          color={line.color}
-          lineWidth={1.2}
-          dashed
-          dashSize={line.dashSize}
-          gapSize={line.gapSize}
-          transparent
-          opacity={line.opacity}
+    <points ref={ref}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          array={positions}
+          count={totalParticles}
+          itemSize={3}
         />
-      ))}
-    </group>
+        <bufferAttribute
+          attach="attributes-color"
+          array={colors}
+          count={totalParticles}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <pointsMaterial
+        size={0.55}
+        sizeAttenuation
+        vertexColors
+        transparent
+        map={smokeTex}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+      />
+    </points>
   );
 }
 
