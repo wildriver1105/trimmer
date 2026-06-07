@@ -10,6 +10,7 @@ const items = [
   { key: 'showTelltales', label: 'Telltales' },
   { key: 'showForces', label: 'Force arrows' },
   { key: 'showWind', label: 'Wind arrows' },
+  { key: 'showHeel', label: 'Heel (boat tilt)' },
   { key: 'wireframe', label: 'Wireframe' },
 ];
 

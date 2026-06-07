@@ -28,6 +28,7 @@ export function Scene() {
   const showForces = useSimStore((s) => s.showForces);
   const showWind = useSimStore((s) => s.showWind);
   const showStreamlines = useSimStore((s) => s.showStreamlines);
+  const showHeel = useSimStore((s) => s.showHeel);
   const streamDensity = useSimStore((s) => s.streamDensity);
   const wireframe = useSimStore((s) => s.wireframe);
 
@@ -58,6 +59,14 @@ export function Scene() {
   const mainSail = sails.find((s) => s.key === 'main');
   const spinnakerSail = sails.find((s) => s.key === 'spinnaker');
   const gennakerSail = sails.find((s) => s.key === 'gennaker');
+
+  // 힐 각도(rad). 모든 활성 세일의 heel 성분 합 → tanh 포화로 최대 ±28° 정도.
+  // 토글 OFF 면 0.
+  const heelRoll = useMemo(() => {
+    if (!showHeel) return 0;
+    const totalHeel = sails.reduce((s, sl) => s + sl.forces.total.heel, 0);
+    return 0.5 * Math.tanh(totalHeel / 1200);
+  }, [showHeel, sails]);
 
   return (
     <Canvas
@@ -101,42 +110,45 @@ export function Scene() {
           infiniteGrid
         />
 
-        <Rig
-          mastBend={mainSail?.shape.mastBend ?? 0}
-          boomAngle={mainSail?.shape.boomAngle ?? 0}
-          boomRise={mainSail?.shape.boomRise ?? 0}
-          showBoom={!!mainSail}
-          spinnakerPole={spinnakerSail?.shape.pole ?? null}
-          gennakerBowsprit={gennakerSail?.shape.bowsprit ?? null}
-        />
-
-        {sails.map(({ key, geomData, forces }) => (
-          <Sail
-            key={key}
-            geomData={geomData}
-            forces={forces}
-            showPressure={showPressure}
-            wireframe={wireframe}
+        {/* 보트 및 세일 — 힐(heelRoll) 적용. WindField는 절대 좌표 유지 (외부에). */}
+        <group rotation={[heelRoll, 0, 0]}>
+          <Rig
+            mastBend={mainSail?.shape.mastBend ?? 0}
+            boomAngle={mainSail?.shape.boomAngle ?? 0}
+            boomRise={mainSail?.shape.boomRise ?? 0}
+            showBoom={!!mainSail}
+            spinnakerPole={spinnakerSail?.shape.pole ?? null}
+            gennakerBowsprit={gennakerSail?.shape.bowsprit ?? null}
           />
-        ))}
+
+          {sails.map(({ key, geomData, forces }) => (
+            <Sail
+              key={key}
+              geomData={geomData}
+              forces={forces}
+              showPressure={showPressure}
+              wireframe={wireframe}
+            />
+          ))}
+
+          {showStreamlines && sails.map(({ key, geomData, forces }) => (
+            <Streamlines
+              key={`sl-${key}`}
+              geomData={geomData}
+              forces={forces}
+              wind={wind}
+              density={streamDensity / Math.sqrt(sails.length)}
+            />
+          ))}
+          {showForces && sails.map(({ key, forces }) => (
+            <ForceArrows key={`fa-${key}`} sailKey={key} forces={forces} wind={wind} />
+          ))}
+          {showTelltales && sails.map(({ key, geomData, forces }) => (
+            <Telltales key={`tt-${key}`} geomData={geomData} forces={forces} />
+          ))}
+        </group>
 
         {showWind && <WindField wind={wind} />}
-        {showStreamlines && sails.map(({ key, geomData, forces }) => (
-          <Streamlines
-            key={`sl-${key}`}
-            geomData={geomData}
-            forces={forces}
-            wind={wind}
-            // 세일 수 N일 때 라인 수가 폭증하지 않도록 1/√N 자동 감소
-            density={streamDensity / Math.sqrt(sails.length)}
-          />
-        ))}
-        {showForces && sails.map(({ key, forces }) => (
-          <ForceArrows key={`fa-${key}`} sailKey={key} forces={forces} wind={wind} />
-        ))}
-        {showTelltales && sails.map(({ key, geomData, forces }) => (
-          <Telltales key={`tt-${key}`} geomData={geomData} forces={forces} />
-        ))}
       </Suspense>
 
       <OrbitControls

@@ -30,6 +30,7 @@ export const useSimStore = create((set, get) => ({
   showForces: true,
   showWind: true,
   showStreamlines: true,
+  showHeel: false,            // 힐(보트 기울임) 시각화 — 기본 OFF
   wireframe: false,
 
   // 시각화 매개변수
