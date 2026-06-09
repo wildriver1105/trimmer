@@ -5,40 +5,86 @@ import * as THREE from 'three';
 import { Html } from '@react-three/drei';
 import { COLORS, SAIL } from '@/lib/constants';
 
-// 화살표 — 간단한 cylinder + cone 조합
+// 화살표 — 부드러운 모양:
+//   - 끝 base에 반구 cap
+//   - tapered shaft (앞쪽이 살짝 두꺼워져 헤드로 자연스럽게 연결)
+//   - shaft↔head 사이 작은 ring을 둠 (집합부 어색함 제거)
+//   - 헤드 cone의 segment 수 증가 + 살짝 emissive 글로우
 function Arrow({ from, dir, length, color, label, headSize = 0.5 }) {
   const len = Math.max(length, 0.01);
-  const dirN = new THREE.Vector3(...dir).normalize();
-  const fromV = new THREE.Vector3(...from);
+  const dirN = useMemo(() => new THREE.Vector3(...dir).normalize(), [dir[0], dir[1], dir[2]]);
+  const fromV = useMemo(() => new THREE.Vector3(...from), [from[0], from[1], from[2]]);
 
-  // quaternion: +y(기본 cylinder/cone axis) -> dirN
   const quat = useMemo(() => {
     const q = new THREE.Quaternion();
     q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dirN);
     return q;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dirN.x, dirN.y, dirN.z]);
+  }, [dirN]);
 
   const shaftLen = Math.max(0.01, len - headSize);
-  // 길이에 비례한 샤프트 두께 (최소 6cm)
-  const shaftRadius = Math.max(0.06, len * 0.022);
-  // cylinder는 기본적으로 +y 중심에 위치 → translate 절반만큼
-  const cylinderPos = dirN.clone().multiplyScalar(shaftLen / 2).add(fromV);
-  const conePos = dirN.clone().multiplyScalar(shaftLen + headSize / 2).add(fromV);
+  const shaftR = Math.max(0.06, len * 0.022);
+  const shaftFrontR = shaftR * 1.18;       // 앞쪽이 살짝 두꺼움 → 부드러운 taper
+  const headBaseR = Math.max(headSize * 0.42, shaftR * 2.2);
+
+  const basePos      = fromV.clone();
+  const shaftCenter  = dirN.clone().multiplyScalar(shaftLen / 2).add(fromV);
+  const joinPos      = dirN.clone().multiplyScalar(shaftLen).add(fromV);
+  const conePos      = dirN.clone().multiplyScalar(shaftLen + headSize / 2).add(fromV);
+  const labelPos     = dirN.clone().multiplyScalar(len + 0.4).add(fromV);
 
   return (
     <group>
-      <mesh position={cylinderPos.toArray()} quaternion={quat}>
-        <cylinderGeometry args={[shaftRadius, shaftRadius, shaftLen, 10]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.2} />
+      {/* base cap — 시작점 반구 */}
+      <mesh position={basePos.toArray()}>
+        <sphereGeometry args={[shaftR * 1.05, 16, 12]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={0.18}
+          roughness={0.35}
+          metalness={0.1}
+        />
       </mesh>
+
+      {/* shaft — tapered cylinder (뒤쪽 얇고 앞쪽 살짝 두꺼움) */}
+      <mesh position={shaftCenter.toArray()} quaternion={quat}>
+        <cylinderGeometry args={[shaftFrontR, shaftR, shaftLen, 24, 1, false]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={0.22}
+          roughness={0.3}
+          metalness={0.15}
+        />
+      </mesh>
+
+      {/* shaft ↔ head 연결부에 작은 원반 — 시각적 매끄러움 */}
+      <mesh position={joinPos.toArray()} quaternion={quat}>
+        <sphereGeometry args={[headBaseR * 0.55, 20, 14]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={0.28}
+          roughness={0.28}
+          metalness={0.15}
+        />
+      </mesh>
+
+      {/* head cone — segment 증가 + 더 강한 글로우 */}
       <mesh position={conePos.toArray()} quaternion={quat}>
-        <coneGeometry args={[Math.max(headSize * 0.38, shaftRadius * 2), headSize, 14]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.3} />
+        <coneGeometry args={[headBaseR, headSize, 28, 4, false]} />
+        <meshStandardMaterial
+          color={color}
+          emissive={color}
+          emissiveIntensity={0.35}
+          roughness={0.25}
+          metalness={0.2}
+        />
       </mesh>
+
       {label && (
         <Html
-          position={dirN.clone().multiplyScalar(len + 0.4).add(fromV).toArray()}
+          position={labelPos.toArray()}
           center
           style={{
             color,
