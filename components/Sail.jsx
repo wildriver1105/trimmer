@@ -75,17 +75,22 @@ export function Sail({ geomData, forces, showPressure, wireframe }) {
 
   return (
     <group>
-      {/* 메인 sail mesh */}
+      {/* 메인 sail mesh — 패브릭 sheen이 있는 physical material */}
       <mesh ref={meshRef} geometry={geometry} castShadow receiveShadow>
-        <meshStandardMaterial
+        <meshPhysicalMaterial
           color={showPressure ? '#ffffff' : COLORS.sail}
           vertexColors={showPressure}
           side={THREE.DoubleSide}
-          roughness={0.6}
+          roughness={0.62}
           metalness={0.0}
+          sheen={1.0}
+          sheenRoughness={0.55}
+          sheenColor={'#ffffff'}
+          clearcoat={0.06}
+          clearcoatRoughness={0.6}
           wireframe={wireframe}
           transparent
-          opacity={0.96}
+          opacity={0.97}
         />
       </mesh>
 

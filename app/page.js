@@ -27,12 +27,12 @@ export default function Home() {
 
 function Overlay() {
   return (
-    <div className="absolute top-3 left-3 pointer-events-none select-none">
-      <div className="text-[10px] uppercase tracking-[0.25em] text-cyan-300/80">
+    <div className="absolute top-3 left-3 pointer-events-none select-none bg-slate-900/55 backdrop-blur-sm rounded-md px-2.5 py-1.5 border border-slate-700/40">
+      <div className="text-[10px] uppercase tracking-[0.25em] text-cyan-300/90">
         Sail Trim Lab
       </div>
-      <div className="text-[10px] text-slate-400 mt-0.5">
-        Mainsail · 매개변수 기반 시뮬레이션
+      <div className="text-[10px] text-slate-300 mt-0.5">
+        매개변수 기반 세일 트리밍 시뮬레이션
       </div>
     </div>
   );

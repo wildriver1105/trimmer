@@ -1,18 +1,24 @@
 'use client';
 
+import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid } from '@react-three/drei';
+import { OrbitControls, Sky } from '@react-three/drei';
+import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
 import { Suspense, useMemo } from 'react';
 import { useSimStore, getActiveSails } from '@/store/useSimStore';
 import { buildShape, buildGeometry } from '@/lib/sails';
 import { computeWind, computeForces } from '@/lib/aero';
 import { Sail } from './Sail';
 import { Rig } from './Rig';
+import { Ocean } from './Ocean';
 import { WindField } from './WindField';
 import { ForceArrows } from './ForceArrows';
 import { Telltales } from './Telltales';
 import { Streamlines } from './Streamlines';
 import { SAIL, COLORS } from '@/lib/constants';
+
+// 황혼(golden hour) 해 위치 — Sky와 directional light가 공유
+const SUN_POS = [60, 14, -38];
 
 export function Scene() {
   const TWS = useSimStore((s) => s.TWS);
@@ -72,17 +78,33 @@ export function Scene() {
     <Canvas
       shadows
       dpr={[1, 2]}
-      camera={{ position: [16, 10, 16], fov: 42, near: 0.1, far: 200 }}
-      gl={{ antialias: true }}
+      camera={{ position: [16, 10, 16], fov: 42, near: 0.1, far: 300 }}
+      gl={{
+        antialias: true,
+        toneMapping: THREE.ACESFilmicToneMapping,
+        toneMappingExposure: 1.05,
+      }}
     >
-      <color attach="background" args={[COLORS.sky]} />
-      <fog attach="fog" args={[COLORS.sky, 35, 110]} />
+      <fog attach="fog" args={['#243c52', 55, 180]} />
 
-      <ambientLight intensity={0.45} />
+      {/* 황혼 하늘 */}
+      <Sky
+        distance={450000}
+        sunPosition={SUN_POS}
+        turbidity={6}
+        rayleigh={2.2}
+        mieCoefficient={0.005}
+        mieDirectionalG={0.85}
+      />
+
+      {/* 낮게 깔린 따뜻한 해 + 차가운 하늘광 */}
+      <ambientLight intensity={0.25} />
       <directionalLight
-        position={[18, 25, 10]}
-        intensity={1.0}
+        position={SUN_POS}
+        intensity={1.6}
+        color={'#ffd9b0'}
         castShadow
+        shadow-bias={-0.0005}
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
         shadow-camera-left={-25}
@@ -90,25 +112,11 @@ export function Scene() {
         shadow-camera-top={25}
         shadow-camera-bottom={-25}
       />
-      <hemisphereLight color={'#8fb6e0'} groundColor={'#0a2a3c'} intensity={0.35} />
+      <hemisphereLight color={'#86b0d8'} groundColor={'#0a2438'} intensity={0.45} />
 
       <Suspense fallback={null}>
-        {/* 바다 */}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.5, 0]} receiveShadow>
-          <planeGeometry args={[200, 200]} />
-          <meshStandardMaterial color={COLORS.sea} roughness={0.85} metalness={0.05} />
-        </mesh>
-        <Grid
-          position={[0, -0.48, 0]}
-          args={[200, 200]}
-          cellColor={COLORS.grid}
-          sectionColor={'#1a5072'}
-          cellSize={2}
-          sectionSize={10}
-          fadeDistance={70}
-          fadeStrength={1.2}
-          infiniteGrid
-        />
+        {/* 움직이는 바다 (GPU 파도) */}
+        <Ocean />
 
         {/* 보트 및 세일 — 힐(heelRoll) 적용. WindField는 절대 좌표 유지 (외부에). */}
         <group rotation={[heelRoll, 0, 0]}>
@@ -149,6 +157,17 @@ export function Scene() {
         </group>
 
         {showWind && <WindField wind={wind} />}
+
+        {/* 후처리 — 연기/화살표 글로우 + 가장자리 비네트 */}
+        <EffectComposer multisampling={4}>
+          <Bloom
+            intensity={0.45}
+            luminanceThreshold={0.72}
+            luminanceSmoothing={0.25}
+            mipmapBlur
+          />
+          <Vignette eskil={false} offset={0.18} darkness={0.55} />
+        </EffectComposer>
       </Suspense>
 
       <OrbitControls

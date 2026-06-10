@@ -175,18 +175,25 @@ function Hull() {
 
   return (
     <group>
+      {/* 헐 — gelcoat 광택 (clearcoat) */}
       <mesh geometry={hullGeom} castShadow receiveShadow>
-        <meshStandardMaterial color={COLORS.hull} roughness={0.55} metalness={0.15} />
+        <meshPhysicalMaterial
+          color={COLORS.hull}
+          roughness={0.4}
+          metalness={0.1}
+          clearcoat={0.7}
+          clearcoatRoughness={0.22}
+        />
       </mesh>
-      {/* 데크 */}
+      {/* 데크 — 무광 non-skid */}
       <mesh position={[0, 0.21, 0]} receiveShadow>
         <boxGeometry args={[RIG.hullLength * 0.95, 0.04, RIG.hullBeam * 0.85]} />
-        <meshStandardMaterial color={'#3a4654'} roughness={0.7} />
+        <meshStandardMaterial color={'#3a4654'} roughness={0.85} />
       </mesh>
-      {/* boot stripe */}
+      {/* boot stripe — 광택 도장 */}
       <mesh position={[0, -0.1, 0]}>
         <boxGeometry args={[RIG.hullLength * 0.96, 0.06, RIG.hullBeam * 0.92]} />
-        <meshStandardMaterial color={'#d9534f'} />
+        <meshPhysicalMaterial color={'#d9534f'} roughness={0.35} clearcoat={0.5} clearcoatRoughness={0.3} />
       </mesh>
     </group>
   );
