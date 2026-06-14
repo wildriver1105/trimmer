@@ -8,6 +8,7 @@ import { Toggles } from './Toggles';
 import { Readout } from './Readout';
 import { SailInventory } from './SailInventory';
 import { SailSection } from './SailSection';
+import { EnvironmentControls } from './EnvironmentControls';
 
 const SECTION_ACCENT = {
   main: 'cyan',
@@ -70,6 +71,7 @@ export function ControlPanel() {
       })}
 
       <Toggles />
+      <EnvironmentControls />
       <Readout />
 
       <footer className="mt-6 pt-3 border-t border-slate-800 text-[10px] text-slate-500 leading-snug">

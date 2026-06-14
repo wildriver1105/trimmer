@@ -16,15 +16,14 @@ import { ForceArrows } from './ForceArrows';
 import { Telltales } from './Telltales';
 import { Streamlines } from './Streamlines';
 import { SAIL, COLORS } from '@/lib/constants';
-
-// 황혼(golden hour) 해 위치 — Sky와 directional light가 공유
-const SUN_POS = [60, 14, -38];
+import { computeSun } from '@/lib/sun';
 
 export function Scene() {
   const TWS = useSimStore((s) => s.TWS);
   const TWA = useSimStore((s) => s.TWA);
   const SOG = useSimStore((s) => s.SOG);
   const trim = useSimStore((s) => s.trim);
+  const timeOfDay = useSimStore((s) => s.timeOfDay);
   const activeMain = useSimStore((s) => s.activeMain);
   const activeHeadsail = useSimStore((s) => s.activeHeadsail);
   const activeDownwind = useSimStore((s) => s.activeDownwind);
@@ -44,6 +43,13 @@ export function Scene() {
   );
 
   const wind = useMemo(() => computeWind(TWS, TWA, SOG), [TWS, TWA, SOG]);
+
+  // 시각(time of day)에서 태양 방향·색·조명 도출
+  const sun = useMemo(() => computeSun(timeOfDay), [timeOfDay]);
+  const sunLightPos = useMemo(
+    () => [sun.dir[0] * 80, Math.max(3, sun.dir[1] * 80), sun.dir[2] * 80],
+    [sun]
+  );
 
   // 활성 세일별 shape/geom/forces 계산.
   // sails 배열의 항목은 { key, shape, geomData, forces } 또는 stub은 null.
@@ -78,31 +84,32 @@ export function Scene() {
     <Canvas
       shadows
       dpr={[1, 2]}
-      camera={{ position: [16, 10, 16], fov: 42, near: 0.1, far: 300 }}
+      camera={{ position: [16, 10, 16], fov: 42, near: 0.1, far: 4000 }}
       gl={{
         antialias: true,
         toneMapping: THREE.ACESFilmicToneMapping,
-        toneMappingExposure: 1.05,
+        toneMappingExposure: 1.0,
       }}
     >
-      <fog attach="fog" args={['#243c52', 55, 180]} />
+      {/* 안개 — 먼 바다를 수평선 색으로 페이드 (보트 근처는 영향 없음) */}
+      <fog attach="fog" args={[sun.fogColor, 180, 1600]} />
 
-      {/* 황혼 하늘 */}
+      {/* 하늘 — 시각에 따라 태양 위치/대기 산란 변화 */}
       <Sky
         distance={450000}
-        sunPosition={SUN_POS}
-        turbidity={6}
-        rayleigh={2.2}
+        sunPosition={sun.dir}
+        turbidity={sun.turbidity}
+        rayleigh={sun.rayleigh}
         mieCoefficient={0.005}
-        mieDirectionalG={0.85}
+        mieDirectionalG={0.88}
       />
 
-      {/* 낮게 깔린 따뜻한 해 + 차가운 하늘광 */}
-      <ambientLight intensity={0.25} />
+      {/* 태양광 (시각에 따라 방향·색·세기 변화) + 하늘광 */}
+      <ambientLight intensity={sun.ambient} />
       <directionalLight
-        position={SUN_POS}
-        intensity={1.6}
-        color={'#ffd9b0'}
+        position={sunLightPos}
+        intensity={sun.sunIntensity}
+        color={sun.sunColor}
         castShadow
         shadow-bias={-0.0005}
         shadow-mapSize-width={2048}
@@ -112,11 +119,11 @@ export function Scene() {
         shadow-camera-top={25}
         shadow-camera-bottom={-25}
       />
-      <hemisphereLight color={'#86b0d8'} groundColor={'#0a2438'} intensity={0.45} />
+      <hemisphereLight color={'#86b0d8'} groundColor={'#0a2438'} intensity={sun.hemi} />
 
       <Suspense fallback={null}>
-        {/* 움직이는 바다 (GPU 파도) */}
-        <Ocean />
+        {/* 현실적인 바다 (반사 + 태양 글리터) */}
+        <Ocean sunDirection={sun.dir} sunColor={sun.sunColor} />
 
         {/* 보트 및 세일 — 힐(heelRoll) 적용. WindField는 절대 좌표 유지 (외부에). */}
         <group rotation={[heelRoll, 0, 0]}>
@@ -161,9 +168,9 @@ export function Scene() {
         {/* 후처리 — 연기/화살표 글로우 + 가장자리 비네트 */}
         <EffectComposer multisampling={4}>
           <Bloom
-            intensity={0.45}
-            luminanceThreshold={0.72}
-            luminanceSmoothing={0.25}
+            intensity={0.38}
+            luminanceThreshold={0.85}
+            luminanceSmoothing={0.3}
             mipmapBlur
           />
           <Vignette eskil={false} offset={0.18} darkness={0.55} />

@@ -36,6 +36,9 @@ export const useSimStore = create((set, get) => ({
   // 시각화 매개변수
   streamDensity: sliderDefaults.streamDensity,
 
+  // 환경
+  timeOfDay: sliderDefaults.timeOfDay,
+
   // ----- Actions -----
 
   // 글로벌 슬라이더(TWS/TWA/SOG/streamDensity)에 대한 setter
@@ -77,6 +80,7 @@ export const useSimStore = create((set, get) => ({
     activeDownwind: null,
     trim: allDefaults(),
     streamDensity: sliderDefaults.streamDensity,
+    timeOfDay: sliderDefaults.timeOfDay,
   }),
 }));
 
