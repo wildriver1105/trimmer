@@ -68,119 +68,106 @@ export function Streamlines({ geomData, forces, wind, density = 1.0 }) {
     [config, geomData, forces, wind]
   );
 
-  return <SmokeFlow lines={lines} />;
+  return <FlowLines lines={lines} />;
 }
 
-// ──────────── 연기 파티클 렌더링 ────────────
+// ──────────── 연속 스트림라인(dye streak) 렌더링 ────────────
+//
+// 풍동 실험처럼: 각 경로를 매끈한 연속 곡선으로 그리고(흐름장 형태가 항상 보임),
+// 그 위로 밝은 띠(dye pulse)가 흘러 방향·속도를 나타낸다.
+// 모든 곡선을 하나의 LineSegments로 합쳐 vertex color만 매 프레임 갱신(1 draw call).
 
-const PARTICLES_PER_STREAM = 14;
-const FLOW_SPEED = 0.12;       // 경로 1을 약 1/0.12 ≈ 8.3초에 횡단
+const RES = 48;          // 곡선 리샘플 해상도 (Catmull-Rom)
+const PULSES = 3;        // 한 곡선에 동시에 보이는 dye 띠 수
+const FLOW_RATE = 0.85;  // 띠가 곡선을 횡단하는 속도 (≈ PULSES/이 값 초)
+const AMBIENT = 0.5;     // 곡선 상시 밝기 (흐름장 형태) — 밝은 배경에서도 보이게
 
-/** 라디얼 그라데이션 텍스처 — 부드러운 연기 puff 모양 */
-function makeSmokeTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 64; canvas.height = 64;
-  const ctx = canvas.getContext('2d');
-  const grad = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grad.addColorStop(0,    'rgba(255,255,255,1)');
-  grad.addColorStop(0.25, 'rgba(255,255,255,0.55)');
-  grad.addColorStop(0.6,  'rgba(255,255,255,0.15)');
-  grad.addColorStop(1,    'rgba(255,255,255,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 64, 64);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  return tex;
-}
+function FlowLines({ lines }) {
+  // 경로를 매끈하게 리샘플 → LineSegments 정점/메타 구성 (정적, lines 바뀔 때만)
+  const built = useMemo(() => {
+    const segVerts = lines.length * (RES - 1) * 2;
+    const positions = new Float32Array(segVerts * 3);
+    const sArr = new Float32Array(segVerts);       // 정점별 정규 호 위치 0..1
+    const baseCol = new Float32Array(segVerts * 3);
+    const baseOp = new Float32Array(segVerts);
+    let v = 0;
 
-function SmokeFlow({ lines }) {
-  const totalParticles = lines.length * PARTICLES_PER_STREAM;
-  const smokeTex = useMemo(makeSmokeTexture, []);
-
-  // 경로를 평탄화된 Float32Array로 미리 변환해 useFrame에서 빠르게 lerp.
-  const streamData = useMemo(() => {
-    return lines.map((line) => {
-      const N = line.points.length;
-      const path = new Float32Array(N * 3);
-      for (let i = 0; i < N; i++) {
-        path[i * 3]     = line.points[i].x;
-        path[i * 3 + 1] = line.points[i].y;
-        path[i * 3 + 2] = line.points[i].z;
+    for (const line of lines) {
+      if (!line.points || line.points.length < 2) continue;
+      const curve = new THREE.CatmullRomCurve3(line.points);
+      const pts = curve.getPoints(RES - 1);        // RES개 점
+      const col = new THREE.Color(line.color);
+      const op = line.opacity ?? 0.75;
+      for (let i = 0; i < RES - 1; i++) {
+        const s0 = i / (RES - 1);
+        const s1 = (i + 1) / (RES - 1);
+        const a = pts[i], b = pts[i + 1];
+        // segment 시작 정점
+        positions[v * 3] = a.x; positions[v * 3 + 1] = a.y; positions[v * 3 + 2] = a.z;
+        sArr[v] = s0; baseOp[v] = op;
+        baseCol[v * 3] = col.r; baseCol[v * 3 + 1] = col.g; baseCol[v * 3 + 2] = col.b;
+        v++;
+        // segment 끝 정점
+        positions[v * 3] = b.x; positions[v * 3 + 1] = b.y; positions[v * 3 + 2] = b.z;
+        sArr[v] = s1; baseOp[v] = op;
+        baseCol[v * 3] = col.r; baseCol[v * 3 + 1] = col.g; baseCol[v * 3 + 2] = col.b;
+        v++;
       }
-      const c = new THREE.Color(line.color);
-      return { path, N, r: c.r, g: c.g, b: c.b, base: line.opacity ?? 0.75 };
-    });
+    }
+    const colors = new Float32Array(segVerts * 3);
+    return { positions, colors, sArr, baseCol, baseOp, count: v };
   }, [lines]);
-
-  const positions = useMemo(() => new Float32Array(totalParticles * 3), [totalParticles]);
-  const colors    = useMemo(() => new Float32Array(totalParticles * 3), [totalParticles]);
 
   const ref = useRef();
   useFrame((state) => {
     const t = state.clock.elapsedTime;
-    let idx = 0;
-
-    for (let si = 0; si < streamData.length; si++) {
-      const { path, N, r, g, b, base } = streamData[si];
-
-      for (let p = 0; p < PARTICLES_PER_STREAM; p++) {
-        const phaseOffset = p / PARTICLES_PER_STREAM;
-        const phase = (t * FLOW_SPEED + phaseOffset) % 1;
-
-        // 경로의 (phase × (N-1)) 위치 보간
-        const fpos = phase * (N - 1);
-        const i0 = Math.floor(fpos);
-        const i1 = Math.min(N - 1, i0 + 1);
-        const frac = fpos - i0;
-        positions[idx * 3]     = path[i0 * 3]     + (path[i1 * 3]     - path[i0 * 3])     * frac;
-        positions[idx * 3 + 1] = path[i0 * 3 + 1] + (path[i1 * 3 + 1] - path[i0 * 3 + 1]) * frac;
-        positions[idx * 3 + 2] = path[i0 * 3 + 2] + (path[i1 * 3 + 2] - path[i0 * 3 + 2]) * frac;
-
-        // 라이프사이클: 0→1→0 (sin curve)
-        const alpha = Math.sin(phase * Math.PI) * base;
-        colors[idx * 3]     = r * alpha;
-        colors[idx * 3 + 1] = g * alpha;
-        colors[idx * 3 + 2] = b * alpha;
-
-        idx++;
-      }
+    const { colors, sArr, baseCol, baseOp, count } = built;
+    const phaseShift = t * FLOW_RATE;
+    for (let v = 0; v < count; v++) {
+      const s = sArr[v];
+      // 흐르는 dye 띠: PULSES개의 가우시안 blob이 곡선을 따라 흐름
+      const cell = (s * PULSES - phaseShift);
+      const f = cell - Math.floor(cell);          // 0..1 (셀 내 위치)
+      const d = (f - 0.5) / 0.16;
+      const pulse = Math.exp(-d * d);
+      // 양끝 페이드 (멀리 뻗은 상/하류 끝을 부드럽게)
+      const edge = Math.min(1, s / 0.06) * Math.min(1, (1 - s) / 0.10);
+      const bright = (AMBIENT + 1.25 * pulse) * baseOp[v] * edge;
+      colors[v * 3] = baseCol[v * 3] * bright;
+      colors[v * 3 + 1] = baseCol[v * 3 + 1] * bright;
+      colors[v * 3 + 2] = baseCol[v * 3 + 2] * bright;
     }
-
-    if (ref.current) {
-      ref.current.geometry.attributes.position.needsUpdate = true;
-      ref.current.geometry.attributes.color.needsUpdate = true;
-    }
+    if (ref.current) ref.current.geometry.attributes.color.needsUpdate = true;
   });
 
-  if (totalParticles === 0) return null;
+  if (built.count === 0) return null;
 
   return (
-    <points ref={ref}>
+    // key=count: 정점 수가 바뀌면 새 geometry로 remount (three는 attribute 리사이즈 미지원)
+    <lineSegments key={built.count} ref={ref}>
       <bufferGeometry>
         <bufferAttribute
           attach="attributes-position"
-          array={positions}
-          count={totalParticles}
+          array={built.positions}
+          count={built.count}
           itemSize={3}
         />
         <bufferAttribute
           attach="attributes-color"
-          array={colors}
-          count={totalParticles}
+          array={built.colors}
+          count={built.count}
           itemSize={3}
         />
       </bufferGeometry>
-      <pointsMaterial
-        size={0.55}
-        sizeAttenuation
+      {/* NormalBlending + 적당한 opacity — 밝은 수면/어두운 세일 양쪽에서 보임 */}
+      <lineBasicMaterial
         vertexColors
         transparent
-        map={smokeTex}
-        blending={THREE.AdditiveBlending}
+        opacity={0.78}
+        blending={THREE.NormalBlending}
         depthWrite={false}
       />
-    </points>
+    </lineSegments>
   );
 }
 
@@ -205,8 +192,10 @@ function computeStreamlines(config, geomData, forces, wind) {
     const luffY = st.luff[1];
     const luffZ = st.luff[2];
 
-    // 코드 방향 (luff → leech)
+    // 코드 방향 (luff → leech). 헤드 단면처럼 luff==leech로 수렴하면 chord 길이가 0 →
+    // NaN 방지를 위해 건너뛴다.
     const chordLen = Math.hypot(st.leech[0] - luffX, st.leech[2] - luffZ);
+    if (chordLen < 1e-4) continue;
     const sx = (st.leech[0] - luffX) / chordLen;
     const sz = (st.leech[2] - luffZ) / chordLen;
 
@@ -307,18 +296,17 @@ function computeStreamlines(config, geomData, forces, wind) {
       points.push([px, py, pz]);
     }
 
-    // 색상 — 정상/언더트림/오버트림 구분
-    let color, dashSize, gapSize;
-    if (stalled) {
-      color = '#ff7a7a';                // 오버트림: 빨강
-      dashSize = 0.35; gapSize = 0.22;  // 더 잘게 — 난류 느낌
-    } else if (engagement < 0.18) {
-      color = '#9ec5e6';                // 언더트림(luffing): 옅은 파랑
-      dashSize = 0.55; gapSize = 0.40;
-    } else {
-      color = '#ffffff';                // 정상 흐름: 흰색
-      dashSize = 0.50; gapSize = 0.30;
-    }
+    // 색상 — 흰색/회색 톤으로 통일. 흐름 상태는 명도로 구분.
+    //   정상=밝은 흰색, 언더트림=중간 회색, stall(난류)=짙은 회색.
+    let baseLum;
+    if (stalled) baseLum = 0.55;
+    else if (engagement < 0.18) baseLum = 0.74;
+    else baseLum = 1.0;
+    // 줄마다 명도를 살짝 흩어 흰색~회색이 자연스럽게 섞이게 (lateral offset 해시)
+    const hash = (Math.sin(d * 127.1) * 43758.5453);
+    const jit = 0.72 + 0.28 * (hash - Math.floor(hash));
+    const lum = Math.max(0, Math.min(1, baseLum * jit));
+    const color = new THREE.Color(lum, lum, lum);
 
     // 세일 가까울수록 더 진하게
     const absD = Math.abs(d);
@@ -331,8 +319,6 @@ function computeStreamlines(config, geomData, forces, wind) {
       points: points.map((p) => new THREE.Vector3(...p)),
       color,
       opacity,
-      dashSize,
-      gapSize,
     });
   }
   return result;
