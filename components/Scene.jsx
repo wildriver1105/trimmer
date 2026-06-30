@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Sky } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
-import { Suspense, useMemo } from 'react';
+import { Suspense, useMemo, useState, useEffect } from 'react';
 import { useSimStore, getActiveSails } from '@/store/useSimStore';
 import { buildShape, buildGeometry } from '@/lib/sails';
 import { computeWind, computeForces } from '@/lib/aero';
@@ -18,7 +18,38 @@ import { Streamlines } from './Streamlines';
 import { SAIL, COLORS } from '@/lib/constants';
 import { computeSun } from '@/lib/sun';
 
+// 페이지가 숨겨지거나 창이 포커스를 잃으면 active=false → 렌더 루프 일시정지.
+// SSR 안전: document/window 접근은 useEffect 내부에서만.
+function usePageActive() {
+  const [active, setActive] = useState(true);
+  useEffect(() => {
+    // 보이는 동안은 항상 렌더, 탭이 진짜 숨겨졌을 때만(백그라운드/최소화/화면꺼짐) 정지.
+    // hasFocus()까지 보면 창이 최전면이 아닐 때도 멈춰 3D가 안 보이는 문제가 생겨 제외.
+    const update = () => setActive(!document.hidden);
+    update();
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  return active;
+}
+
+// 모바일/저전력 디바이스 감지 (클라이언트에서 마운트 후 1회). SSR 안전.
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    setIsMobile(
+      typeof window !== 'undefined' &&
+        (window.matchMedia?.('(pointer: coarse)').matches ||
+          /iPhone|iPad|iPod|Android/i.test(navigator.userAgent))
+    );
+  }, []);
+  return isMobile;
+}
+
 export function Scene() {
+  const active = usePageActive();
+  const isMobile = useIsMobile();
+
   const TWS = useSimStore((s) => s.TWS);
   const TWA = useSimStore((s) => s.TWA);
   const SOG = useSimStore((s) => s.SOG);
@@ -83,10 +114,11 @@ export function Scene() {
   return (
     <Canvas
       shadows
-      dpr={[1, 2]}
+      frameloop={active ? 'always' : 'never'}
+      dpr={isMobile ? 1 : [1, 2]}
       camera={{ position: [16, 10, 16], fov: 42, near: 0.1, far: 4000 }}
       gl={{
-        antialias: true,
+        antialias: !isMobile,
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 1.0,
       }}
@@ -112,8 +144,8 @@ export function Scene() {
         color={sun.sunColor}
         castShadow
         shadow-bias={-0.0005}
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
+        shadow-mapSize-width={isMobile ? 1024 : 2048}
+        shadow-mapSize-height={isMobile ? 1024 : 2048}
         shadow-camera-left={-25}
         shadow-camera-right={25}
         shadow-camera-top={25}
@@ -165,16 +197,19 @@ export function Scene() {
 
         {showWind && <WindField wind={wind} />}
 
-        {/* 후처리 — 연기/화살표 글로우 + 가장자리 비네트 */}
-        <EffectComposer multisampling={4}>
-          <Bloom
-            intensity={0.38}
-            luminanceThreshold={0.85}
-            luminanceSmoothing={0.3}
-            mipmapBlur
-          />
-          <Vignette eskil={false} offset={0.18} darkness={0.55} />
-        </EffectComposer>
+        {/* 후처리 — 연기/화살표 글로우 + 가장자리 비네트.
+            모바일에서는 풀스크린 프레임버퍼 할당이 GPU OOM 원인이므로 비활성화. */}
+        {!isMobile && (
+          <EffectComposer multisampling={4}>
+            <Bloom
+              intensity={0.38}
+              luminanceThreshold={0.85}
+              luminanceSmoothing={0.3}
+              mipmapBlur
+            />
+            <Vignette eskil={false} offset={0.18} darkness={0.55} />
+          </EffectComposer>
+        )}
       </Suspense>
 
       <OrbitControls
